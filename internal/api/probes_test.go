@@ -8,7 +8,11 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/sorotrail/sorovista/internal/source"
+	"github.com/sorotrail/sorovista/internal/source/sorotrailsource"
 )
 
 func discardLogger() *slog.Logger {
@@ -80,6 +84,31 @@ func TestReadyzReportsBackendFailure(t *testing.T) {
 	if res.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("readyz with unhealthy source = %d, want 503", res.StatusCode)
 	}
+}
+
+// TestReadyzAgainstUnreachableUpstream wires a real upstream-mode source, so
+// the mapping from sorotrailsource.Status to the probe's status code is pinned
+// end to end: an indexer that cannot be reached makes this instance not ready,
+// and the reason is handed to the operator rather than hidden behind the code.
+func TestReadyzAgainstUnreachableUpstream(t *testing.T) {
+	upstream := httptest.NewServer(http.NotFoundHandler())
+	upstream.Close() // a closed listener is a genuine connection refusal
+
+	s := New(sorotrailsource.New(upstream.URL, upstream.Client()), discardLogger())
+	mux := http.NewServeMux()
+	mux.Handle("/readyz", s.ReadyzHandler())
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code,
+		"an unreachable indexer is what readiness is meant to detect")
+
+	var body map[string]any
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&body))
+	assert.Equal(t, "not ready", body["status"])
+	assert.Equal(t, "sorotrail", body["mode"])
+	assert.NotEmpty(t, body["detail"], "a 503 with no explanation leaves an operator guessing")
 }
 
 func TestVersionEndpoint(t *testing.T) {

@@ -99,6 +99,13 @@ SoroVista, and both are visible in `internal/source/sorotrailsource`:
 Contributions to SoroTrail that fix either would let a lot of code here be
 deleted, which is the best kind of contribution.
 
+## Code of conduct
+
+Participation in this project is covered by the
+[Code of Conduct](CODE_OF_CONDUCT.md), which says how to report unacceptable
+behaviour and what happens next. Security vulnerabilities are a separate
+channel: see [SECURITY.md](SECURITY.md) rather than the conduct process.
+
 ## Pull requests
 
 - One logical change per pull request.
