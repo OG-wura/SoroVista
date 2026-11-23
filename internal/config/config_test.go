@@ -2,6 +2,7 @@ package config
 
 import (
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,6 +19,10 @@ func TestLoad(t *testing.T) {
 		env     map[string]string
 		wantErr string
 		check   func(t *testing.T, c Config)
+		// checkErr runs on the configuration Load returned alongside an error,
+		// which is how the tests pin what a caller would see if it ignored the
+		// error.
+		checkErr func(t *testing.T, c Config)
 	}{
 		{
 			name: "standalone defaults",
@@ -105,6 +110,67 @@ func TestLoad(t *testing.T) {
 			wantErr: "invalid contract ID",
 		},
 		{
+			name: "info log level is accepted",
+			env: map[string]string{
+				"DATABASE_URL": "postgres://localhost/sorovista",
+				"LOG_LEVEL":    "info",
+			},
+			check: func(t *testing.T, c Config) {
+				assert.Equal(t, slog.LevelInfo, c.LogLevel)
+			},
+		},
+		{
+			name: "warn log level is parsed",
+			env: map[string]string{
+				"DATABASE_URL": "postgres://localhost/sorovista",
+				"LOG_LEVEL":    "warn",
+			},
+			check: func(t *testing.T, c Config) {
+				assert.Equal(t, slog.LevelWarn, c.LogLevel)
+			},
+		},
+		{
+			name: "warning is accepted as a synonym for warn",
+			env: map[string]string{
+				"DATABASE_URL": "postgres://localhost/sorovista",
+				"LOG_LEVEL":    "warning",
+			},
+			check: func(t *testing.T, c Config) {
+				assert.Equal(t, slog.LevelWarn, c.LogLevel)
+			},
+		},
+		{
+			name: "log level is case-insensitive",
+			env: map[string]string{
+				"DATABASE_URL": "postgres://localhost/sorovista",
+				"LOG_LEVEL":    "WARN",
+			},
+			check: func(t *testing.T, c Config) {
+				assert.Equal(t, slog.LevelWarn, c.LogLevel)
+			},
+		},
+		{
+			name: "error log level is parsed",
+			env: map[string]string{
+				"DATABASE_URL": "postgres://localhost/sorovista",
+				"LOG_LEVEL":    "error",
+			},
+			check: func(t *testing.T, c Config) {
+				assert.Equal(t, slog.LevelError, c.LogLevel)
+			},
+		},
+		{
+			name: "an empty log level leaves info in place",
+			env: map[string]string{
+				"DATABASE_URL": "postgres://localhost/sorovista",
+				"LOG_LEVEL":    "",
+			},
+			check: func(t *testing.T, c Config) {
+				assert.Equal(t, slog.LevelInfo, c.LogLevel,
+					"Load skips parseLevel when LOG_LEVEL is empty or unset")
+			},
+		},
+		{
 			name: "poll interval below the floor is rejected",
 			env: map[string]string{
 				"DATABASE_URL":  "postgres://localhost/sorovista",
@@ -133,12 +199,38 @@ func TestLoad(t *testing.T) {
 			},
 		},
 		{
-			name: "invalid log level is rejected",
+			name: "invalid log level names the variable and the accepted values",
 			env: map[string]string{
 				"DATABASE_URL": "postgres://localhost/sorovista",
 				"LOG_LEVEL":    "verbose",
 			},
-			wantErr: "invalid LOG_LEVEL",
+			wantErr: `invalid LOG_LEVEL "verbose" (want debug, info, warn or error)`,
+			// parseLevel hands back a usable level alongside its error so a
+			// caller that ignores the error still gets a sane default. Load
+			// turns that error into a startup failure; this pins the pairing.
+			checkErr: func(t *testing.T, c Config) {
+				assert.Equal(t, slog.LevelInfo, c.LogLevel)
+			},
+		},
+		{
+			name: "HTTP_ADDR is honoured",
+			env: map[string]string{
+				"DATABASE_URL": "postgres://localhost/sorovista",
+				"HTTP_ADDR":    ":9090",
+			},
+			check: func(t *testing.T, c Config) {
+				assert.Equal(t, ":9090", c.HTTPAddr)
+			},
+		},
+		{
+			name: "an empty HTTP_ADDR falls back to the default",
+			env: map[string]string{
+				"DATABASE_URL": "postgres://localhost/sorovista",
+				"HTTP_ADDR":    "",
+			},
+			check: func(t *testing.T, c Config) {
+				assert.Equal(t, DefaultHTTPAddr, c.HTTPAddr)
+			},
 		},
 		{
 			name: "start ledger must be positive",
@@ -147,6 +239,62 @@ func TestLoad(t *testing.T) {
 				"START_LEDGER": "0",
 			},
 			wantErr: "invalid START_LEDGER",
+		},
+		{
+			name: "rate limiting is parsed with both halves",
+			env: map[string]string{
+				"DATABASE_URL":             "postgres://localhost/sorovista",
+				"RATE_LIMIT_RPS":           "2.5",
+				"RATE_LIMIT_BURST":         "5",
+				"RATE_LIMIT_TRUSTED_PROXY": "true",
+			},
+			check: func(t *testing.T, c Config) {
+				assert.Equal(t, 2.5, c.RateLimitRPS)
+				assert.Equal(t, 5, c.RateLimitBurst)
+				assert.True(t, c.RateLimitTrustedProxy)
+			},
+		},
+		{
+			name: "rate limiting is off by default",
+			env:  map[string]string{"DATABASE_URL": "postgres://localhost/sorovista"},
+			check: func(t *testing.T, c Config) {
+				assert.Zero(t, c.RateLimitRPS)
+				assert.Zero(t, c.RateLimitBurst)
+				assert.False(t, c.RateLimitTrustedProxy)
+			},
+		},
+		{
+			name: "rate limit requires the burst too",
+			env: map[string]string{
+				"DATABASE_URL":   "postgres://localhost/sorovista",
+				"RATE_LIMIT_RPS": "10",
+			},
+			wantErr: "must be set together",
+		},
+		{
+			name: "rate limit requires the rate too",
+			env: map[string]string{
+				"DATABASE_URL":     "postgres://localhost/sorovista",
+				"RATE_LIMIT_BURST": "10",
+			},
+			wantErr: "must be set together",
+		},
+		{
+			name: "non-positive rate is rejected",
+			env: map[string]string{
+				"DATABASE_URL":     "postgres://localhost/sorovista",
+				"RATE_LIMIT_RPS":   "0",
+				"RATE_LIMIT_BURST": "1",
+			},
+			wantErr: "invalid RATE_LIMIT_RPS",
+		},
+		{
+			name: "invalid trusted proxy flag is rejected",
+			env: map[string]string{
+				"DATABASE_URL":             "postgres://localhost/sorovista",
+				"RATE_LIMIT_TRUSTED_PROXY": "yes-please",
+			},
+			wantErr: "invalid RATE_LIMIT_TRUSTED_PROXY",
 		},
 		{
 			name: "start and retention ledgers are parsed",
@@ -216,6 +364,9 @@ func TestLoad(t *testing.T) {
 			if tt.wantErr != "" {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tt.wantErr)
+				if tt.checkErr != nil {
+					tt.checkErr(t, cfg)
+				}
 				return
 			}
 			require.NoError(t, err)
@@ -239,6 +390,9 @@ func TestValidContractID(t *testing.T) {
 		{"too long", validContract + "A", false},
 		{"lowercase is not strkey", "c" + validContract[1:], false},
 		{"digits outside base32", validContract[:54] + "01", false},
+		{"prefix only is too short", "C", false},
+		{"all base32 payload is valid", "C" + strings.Repeat("Z", 55), true},
+		{"embedded whitespace is invalid", validContract[:20] + " " + validContract[21:], false},
 	}
 
 	for _, tt := range tests {

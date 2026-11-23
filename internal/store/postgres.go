@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/sorotrail/sorovista/internal/source"
+	"github.com/sorotrail/sorovista/internal/tracing"
 )
 
 // Postgres implements Store on a pgx connection pool.
@@ -24,7 +25,21 @@ type Postgres struct {
 // returning, so a bad DATABASE_URL fails at startup rather than on first
 // request.
 func NewPostgres(ctx context.Context, databaseURL string) (*Postgres, error) {
-	pool, err := pgxpool.New(ctx, databaseURL)
+	return NewPostgresWithTracer(ctx, databaseURL, nil)
+}
+
+// NewPostgresWithTracer is NewPostgres with OpenTelemetry query tracing. A nil
+// or disabled tracer changes nothing, so callers need no conditional.
+func NewPostgresWithTracer(ctx context.Context, databaseURL string, tracer *tracing.Tracer) (*Postgres, error) {
+	config, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("parsing database url: %w", err)
+	}
+	if tracer.Enabled() {
+		config.ConnConfig.Tracer = queryTracer{tracer: tracer}
+	}
+
+	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to postgres: %w", err)
 	}

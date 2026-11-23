@@ -46,7 +46,7 @@ func (s *Server) handleListContracts(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, "listing contracts", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, page)
+	writeConditionalJSON(w, r, contractPageETag(r, page), http.StatusOK, page)
 }
 
 func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
@@ -61,7 +61,8 @@ func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, "listing events", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, annotatedPage{Events: annotateEvents(page.Events), NextCursor: page.NextCursor})
+	writeConditionalJSON(w, r, eventPageETag(r, page), http.StatusOK,
+		annotatedPage{Events: annotateEvents(page.Events), NextCursor: page.NextCursor})
 }
 
 func (s *Server) handleContractEvents(w http.ResponseWriter, r *http.Request) {
@@ -83,7 +84,8 @@ func (s *Server) handleContractEvents(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, "listing contract events", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, annotatedPage{Events: annotateEvents(page.Events), NextCursor: page.NextCursor})
+	writeConditionalJSON(w, r, eventPageETag(r, page), http.StatusOK,
+		annotatedPage{Events: annotateEvents(page.Events), NextCursor: page.NextCursor})
 }
 
 // handleGetContract serves GET /api/contracts/{id}: one contract's summary —
@@ -130,7 +132,8 @@ func (s *Server) handleGetEvent(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, "loading event", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, annotatedEvent{Event: event, Token: DetectTokenEvent(event)})
+	writeConditionalJSON(w, r, eventETag(r, event), http.StatusOK,
+		annotatedEvent{Event: event, Token: DetectTokenEvent(event)})
 }
 
 // handleVersion serves the build information baked in via -ldflags, so a
@@ -435,6 +438,17 @@ func EventQueryFromRequest(r *http.Request) (source.EventQuery, error) {
 	}
 	if q.FromLedger > 0 && q.ToLedger > 0 && q.FromLedger > q.ToLedger {
 		return q, fmt.Errorf("from_ledger %d is after to_ledger %d", q.FromLedger, q.ToLedger)
+	}
+
+	if q.FromTime, err = parseOptionalTimestamp(params.Get("from_time"), "from_time"); err != nil {
+		return q, err
+	}
+	if q.ToTime, err = parseOptionalTimestamp(params.Get("to_time"), "to_time"); err != nil {
+		return q, err
+	}
+	if !q.FromTime.IsZero() && !q.ToTime.IsZero() && q.FromTime.After(q.ToTime) {
+		return q, fmt.Errorf("from_time %s is after to_time %s",
+			q.FromTime.Format(time.RFC3339), q.ToTime.Format(time.RFC3339))
 	}
 
 	if q.Limit, err = parseLimit(params.Get("limit")); err != nil {
