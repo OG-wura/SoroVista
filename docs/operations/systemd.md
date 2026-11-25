@@ -71,11 +71,11 @@ EnvironmentFile=/etc/sorovista/sorovista.env
 ExecStart=/usr/local/bin/sorovista
 
 # Graceful shutdown: cmd/sorovista/main.go traps SIGINT and SIGTERM with a
-# 10-second drain timeout (shutdownTimeout = 10 * time.Second). Keep the
-# default KillSignal=SIGTERM and set TimeoutStopSec above 10s so in-flight
-# HTTP requests and the ingestion loop finish cleanly before SIGKILL.
+# 15-second drain timeout. Keep KillSignal=SIGTERM and set TimeoutStopSec
+# above that so in-flight HTTP requests and the ingestion loop finish cleanly
+# before SIGKILL.
 KillSignal=SIGTERM
-TimeoutStopSec=15s
+TimeoutStopSec=30s
 
 # Restart policy: restart on non-zero exits with a 5-second backoff.
 Restart=on-failure
@@ -94,8 +94,11 @@ ProtectHome=yes
 ReadWritePaths=
 PrivateDevices=yes
 ProtectKernelTunables=yes
+ProtectKernelModules=yes
 ProtectControlGroups=yes
 RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=yes
 
 [Install]
 WantedBy=multi-user.target
@@ -113,7 +116,9 @@ WantedBy=multi-user.target
 - **`PrivateTmp=yes`** — Gives the unit its own isolated `/tmp` and `/var/tmp` namespace that disappears when the service stops, preventing temp-file collisions or symlink attacks.
 - **`ProtectHome=yes`** — Makes `/home`, `/root`, and `/run/user` inaccessible to the process.
 - **`ReadWritePaths=` (empty)** — SoroVista writes nothing to local disk in either mode (standalone mode writes only to Postgres over a socket; upstream mode is completely stateless). Keeping `ReadWritePaths=` empty alongside `ProtectSystem=strict` leaves zero writable directories on the host filesystem.
-- **`PrivateDevices=yes`**, **`ProtectKernelTunables=yes`**, **`ProtectControlGroups=yes`**, **`RestrictSUIDSGID=yes`** — Blocks access to physical device nodes, `/proc/sys` kernel tunables, cgroup hierarchies, and creation of setuid/setgid files.
+- **`PrivateDevices=yes`**, **`ProtectKernelTunables=yes`**, **`ProtectKernelModules=yes`**, **`ProtectControlGroups=yes`**, **`RestrictSUIDSGID=yes`** — Blocks access to physical device nodes, `/proc/sys` kernel tunables, kernel module loading, cgroup hierarchies, and creation of setuid/setgid files.
+- **`RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX`** — Limits socket creation to IPv4, IPv6, and Unix-domain sockets; SoroVista needs nothing else.
+- **`LockPersonality=yes`** — Prevents the process from changing its kernel execution domain via `personality(2)`.
 
 ## 4. Enable, start, and verify
 
@@ -145,6 +150,18 @@ sudo journalctl -u sorovista.service -f
 
 # Show only raw JSON log lines from the current boot
 sudo journalctl -u sorovista.service -b -o cat
+
+# Filter to errors only
+sudo journalctl -u sorovista.service -b -o cat | jq 'select(.level=="ERROR")'
 ```
 
 > **Startup validation & restart loops:** At startup, `cmd/sorovista/main.go` validates all environment variables for the selected `SOURCE_MODE` and (in standalone mode) pings Postgres, runs migrations, and verifies that the Stellar RPC's network passphrase matches `NETWORK` / `NETWORK_PASSPHRASE`. If any check fails, SoroVista logs a `"startup failed"` JSON entry and exits with status `1`. With `Restart=on-failure`, a persistent restart loop every 5 seconds almost always indicates a configuration error in `/etc/sorovista/sorovista.env` (such as a missing `DATABASE_URL`, a wrong `NETWORK` preset, or an unreachable database) rather than a runtime crash.
+
+## 6. Upgrading
+
+```bash
+sudo install -o root -g root -m 0755 bin/sorovista /usr/local/bin/sorovista
+sudo systemctl restart sorovista.service
+```
+
+Standalone mode applies pending migrations at startup; back up the database first. Upstream mode has nothing local to migrate.

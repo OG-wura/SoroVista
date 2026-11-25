@@ -91,17 +91,12 @@ type EventQuery struct {
 	Topic      json.RawMessage
 	FromLedger int64 // inclusive
 	ToLedger   int64 // inclusive
-	// FromTime and ToTime bound events by their on-chain ledger close time
-	// (LedgerClosedAt), both inclusive. Zero means no constraint. They
-	// intersect with the ledger bounds when both kinds are supplied, so an
-	// event must satisfy every bound to match.
-	//
-	// These deliberately filter on LedgerClosedAt rather than CreatedAt: a
-	// backfilled row's ingest time is unrelated to when the event happened, so
-	// filtering on CreatedAt would give different answers on a backfilled
-	// instance than on a live one.
-	FromTime time.Time
-	ToTime   time.Time
+	// InSuccessfulCall filters on whether the emitting call ultimately
+	// succeeded. nil means no constraint; true returns only events from
+	// successful calls and false only events from calls that reverted. The
+	// pointer is what makes all three states expressible — a plain bool could
+	// not tell "only failed" from "unset".
+	InSuccessfulCall *bool
 	// Cursor continues a previous page. It is opaque: only the implementation
 	// that produced it may interpret it.
 	Cursor string
