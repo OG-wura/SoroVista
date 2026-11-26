@@ -89,7 +89,7 @@ func run() error {
 		broker = api.NewBroker()
 	}
 
-	src, cleanup, startIngest, startSweep, err := buildSource(ctx, cfg, log, m, broker)
+	src, cleanup, startIngest, startSweep, err := buildSource(ctx, cfg, log, m, tracer, broker)
 	if err != nil {
 		return err
 	}
