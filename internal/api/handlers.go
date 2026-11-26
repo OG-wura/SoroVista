@@ -457,6 +457,21 @@ func EventQueryFromRequest(r *http.Request) (source.EventQuery, error) {
 	return q, nil
 }
 
+// parseOptionalTimestamp parses an RFC 3339 bound, treating an empty value as
+// "no constraint". A date without a time is rejected rather than silently
+// interpreted as midnight: at the upper bound that would exclude the whole of
+// the named day, which surprises people.
+func parseOptionalTimestamp(raw, name string) (time.Time, error) {
+	if raw == "" {
+		return time.Time{}, nil
+	}
+	t, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("%s must be a valid RFC3339 timestamp", name)
+	}
+	return t.UTC(), nil
+}
+
 func parseBool(name, raw string) (bool, error) {
 	switch strings.ToLower(raw) {
 	case "true":
