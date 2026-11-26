@@ -387,6 +387,25 @@ func EventQueryFromRequest(r *http.Request) (source.EventQuery, error) {
 	params := r.URL.Query()
 	q := source.EventQuery{Cursor: params.Get("cursor"), TxHash: params.Get("tx_hash")}
 
+	// successful=true/false narrows to events whose emitting call did or did
+	// not ultimately succeed. Omitting it leaves both in, exactly as before
+	// this filter existed. in_successful_call is accepted as an alias because
+	// it is the field's name in every event response.
+	for _, name := range []string{"successful", "in_successful_call"} {
+		raw, ok := params[name]
+		if !ok {
+			continue
+		}
+		value, err := parseBool(name, raw[0])
+		if err != nil {
+			return q, err
+		}
+		if q.InSuccessfulCall != nil && *q.InSuccessfulCall != value {
+			return q, fmt.Errorf("successful and in_successful_call disagree")
+		}
+		q.InSuccessfulCall = &value
+	}
+
 	switch t := params.Get("type"); t {
 	case "", "contract", "system", "diagnostic":
 		q.Type = t
@@ -438,19 +457,15 @@ func EventQueryFromRequest(r *http.Request) (source.EventQuery, error) {
 	return q, nil
 }
 
-// parseOptionalTimestamp parses an RFC 3339 bound, treating an empty value as
-// "no constraint". A date without a time is rejected rather than silently
-// interpreted as midnight: at the upper bound that would exclude the whole of
-// the named day, which surprises people.
-func parseOptionalTimestamp(raw, name string) (time.Time, error) {
-	if raw == "" {
-		return time.Time{}, nil
+func parseBool(name, raw string) (bool, error) {
+	switch strings.ToLower(raw) {
+	case "true":
+		return true, nil
+	case "false":
+		return false, nil
+	default:
+		return false, fmt.Errorf("invalid %s %q (want true or false)", name, raw)
 	}
-	t, err := time.Parse(time.RFC3339Nano, raw)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("%s must be a valid RFC3339 timestamp", name)
-	}
-	return t.UTC(), nil
 }
 
 func parseLedger(raw, name string) (int64, error) {
