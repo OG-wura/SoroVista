@@ -158,6 +158,15 @@ func (p *Postgres) QueryEvents(ctx context.Context, q source.EventQuery) ([]sour
 	if q.ToLedger > 0 {
 		where = append(where, "ledger <= "+arg(q.ToLedger))
 	}
+	// Time bounds apply to ledger_closed_at, the on-chain close time. They are
+	// inclusive because a client requesting a range including ledger N expects
+	// to see all its events, not miss those right at the boundary.
+	if !q.FromTime.IsZero() {
+		where = append(where, "ledger_closed_at >= "+arg(q.FromTime.UTC()))
+	}
+	if !q.ToTime.IsZero() {
+		where = append(where, "ledger_closed_at <= "+arg(q.ToTime.UTC()))
+	}
 	if q.InSuccessfulCall != nil {
 		// The column is NOT NULL DEFAULT TRUE, so equality matches every row
 		// unambiguously. No index is added: the value is overwhelmingly true,

@@ -81,7 +81,7 @@ func New() *Metrics {
 		}),
 	}
 	m.registry.MustRegister(m.pollsTotal, m.pollDuration, m.pollLag,
-		m.eventsIngested, m.eventsPruned, m.sincePollSec, m.httpDuration)
+		m.eventsIngested, m.eventsPruned, m.sincePollSec, m.httpDuration, m.rateLimited)
 	return m
 }
 
