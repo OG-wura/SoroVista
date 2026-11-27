@@ -282,7 +282,7 @@ func TestQueryEventsFilters(t *testing.T) {
 		to := time.Unix(1700000110, 0).UTC()
 		got, _, err := pg.QueryEvents(ctx, source.EventQuery{FromTime: from, ToTime: to})
 		require.NoError(t, err)
-		require.Len(t, got, 3, "ledger 105 carries two events and ledger 110 one")
+		require.Len(t, got, 4, "ledger 105 carries two events, ledger 107 one (reverted), and ledger 110 one")
 		for _, e := range got {
 			assert.False(t, e.LedgerClosedAt.Before(from))
 			assert.False(t, e.LedgerClosedAt.After(to))
